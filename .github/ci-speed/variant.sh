@@ -25,14 +25,18 @@ mtime)
   # old mtime (older than any cached build output); files that differ from the golden's commit
   # get "now", so exactly those crates (and their dependents) rebuild. Without this, checkout's
   # fresh mtimes make every workspace crate stale even when the target is restored.
+  # Directories too: `rerun-if-changed=<dir>` makes Cargo compare the directory's own mtime.
   git ls-files -z | xargs -0 touch -h -d @1500000000
+  dirs_of() { awk -F/ '{p=""; for (i=1;i<NF;i++) {p = p (i>1?"/":"") $i; print p}} END {print "."}' | sort -u; }
+  git ls-files | dirs_of | tr '\n' '\0' | xargs -0 touch -h -d @1500000000
   base=$(cat target/.golden-sha 2>/dev/null || true)
   head=$(git rev-parse HEAD)
   echo "golden base=${base:-none} head=$head" | tee -a "$BENCH_DIR/info.txt"
   if [[ -n $base && $base != "$head" ]]; then
     git cat-file -e "$base^{commit}" 2>/dev/null || git fetch -q --depth=50 origin "$base"
-    # Files changed since the golden, plus untracked files the checkout produced: touch now.
+    # Files changed since the golden get "now"; so do their directories (added/removed entries).
     git diff --name-only -z "$base" "$head" | xargs -0 -r touch -c
+    git diff --name-only "$base" "$head" | dirs_of | tr '\n' '\0' | xargs -0 -r touch -c
     git diff --name-only "$base" "$head" | wc -l | sed 's/^/changed files since golden: /' | tee -a "$BENCH_DIR/info.txt"
   fi
   ;;
@@ -83,6 +87,9 @@ record)
     du -sh target 2>/dev/null || true
     du -sh ~/.cargo/registry 2>/dev/null || true
     if [[ $CACHE == sccache ]]; then sccache --show-stats || true; fi
+    # Which linker produced the binaries (Wild/mold/LLD all leave a .comment entry).
+    bin=$(find target/*/deps -maxdepth 1 -type f -executable -size +1M 2>/dev/null | head -1)
+    [[ -n $bin ]] && { echo "linker check: $bin"; readelf -p .comment "$bin" 2>/dev/null | grep -i -E 'wild|mold|lld|gnu ld|GCC' | head -4; }
   } | tee -a "$BENCH_DIR/info.txt"
   mkdir -p "$BENCH_DIR/timings"
   cp target/cargo-timings/cargo-timing-*.html "$BENCH_DIR/timings/" 2>/dev/null || true
