@@ -11,7 +11,8 @@ mkdir -p "$BENCH_DIR"
 case $step in
 info)
   {
-    echo "variant=$VARIANT cache=$CACHE linker=${LINKER:-default} wrapper=${WRAPPER:-none} extra_env=${EXTRA_ENV:-}"
+    echo "variant=$VARIANT cache=$CACHE linker=${LINKER:-default} wrapper=${WRAPPER:-none} preset=${PRESET:-} extra_env=${EXTRA_ENV:-}"
+    env | grep -E '^CARGO_PROFILE|^RUSTFLAGS|^CARGO_INCREMENTAL' | sort
     echo "runner=$RUNNER_NAME os=$RUNNER_OS arch=$RUNNER_ARCH image=${ImageOS:-?}-${ImageVersion:-?}"
     echo "nproc=$(nproc)"
     grep -m1 'model name' /proc/cpuinfo || lscpu | grep -m1 -i 'model name' || true
@@ -28,7 +29,7 @@ mtime)
   # Directories too: `rerun-if-changed=<dir>` makes Cargo compare the directory's own mtime.
   git ls-files -z | xargs -0 touch -h -d @1500000000
   dirs_of() { awk -F/ '{p=""; for (i=1;i<NF;i++) {p = p (i>1?"/":"") $i; print p}} END {print "."}' | sort -u; }
-  git ls-files | dirs_of | tr '\n' '\0' | xargs -0 touch -h -d @1500000000
+  git ls-files -z | tr "\0" "\n" | dirs_of | tr '\n' '\0' | xargs -0 touch -h -d @1500000000
   base=$(cat target/.golden-sha 2>/dev/null || true)
   head=$(git rev-parse HEAD)
   echo "golden base=${base:-none} head=$head" | tee -a "$BENCH_DIR/info.txt"
@@ -36,12 +37,17 @@ mtime)
     git cat-file -e "$base^{commit}" 2>/dev/null || git fetch -q --depth=50 origin "$base"
     # Files changed since the golden get "now"; so do their directories (added/removed entries).
     git diff --name-only -z "$base" "$head" | xargs -0 -r touch -c
-    git diff --name-only "$base" "$head" | dirs_of | tr '\n' '\0' | xargs -0 -r touch -c
+    git diff --name-only -z "$base" "$head" | tr "\0" "\n" | dirs_of | tr '\n' '\0' | xargs -0 -r touch -c
     git diff --name-only "$base" "$head" | wc -l | sed 's/^/changed files since golden: /' | tee -a "$BENCH_DIR/info.txt"
   fi
   ;;
 
 tools)
+  # PRESET deps3: dependencies optimised (opt-level 3), workspace crates as the profile says.
+  if [[ ${PRESET:-} == *deps3* ]]; then
+    mkdir -p .cargo
+    printf '\n[profile.dev.package."*"]\nopt-level = 3\n' >> .cargo/config.toml
+  fi
   # EXTRA_ENV: space-separated NAME=VALUE pairs for this variant (profile overrides etc.).
   for kv in ${EXTRA_ENV:-}; do echo "$kv" >> "$GITHUB_ENV"; done
   case ${LINKER:-default} in
