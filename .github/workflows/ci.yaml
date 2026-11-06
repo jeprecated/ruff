@@ -442,7 +442,9 @@ jobs:
 
   cargo-test-linux:
     name: "cargo test (linux)"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    # Forks: arm64 is one predictable, fast CPU type; ubuntu-latest's x64 hosts vary up to ~2x
+    # (ci-speed 2026-11-06: whole job 0.71x vs the common EPYC 7763 host).
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-16' || 'ubuntu-24.04-arm' }}
     needs: determine_changes
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-test') && (needs.determine_changes.outputs.code == 'true' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 20
@@ -457,6 +459,10 @@ jobs:
         with:
           shared-key: ruff-linux-debug
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Dependencies optimised (workspace crates stay at opt-level 0): the test run takes ~0.78x and
+      # the whole job ~0.87x when the dependency cache is warm; a cold build takes ~1.9x.
+      - name: "Optimise dependencies"
+        run: printf '\n[profile.dev.package."*"]\nopt-level = 3\n' >> .cargo/config.toml
       - name: "Install Rust toolchain"
         run: rustup show
       - uses: $/.github/actions/setup-ruff-workspace
